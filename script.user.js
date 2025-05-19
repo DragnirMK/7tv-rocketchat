@@ -16,7 +16,8 @@
     const EMOTE_REGEX = /^:([A-Z0-9_]+):$/i;
     const LOCAL_STORAGE_KEY = "rc_seventv_emote_cache";
 
-    let messageObserver = null;
+    let messagesObserver = null;
+    let threadObserver = null;
     let currentUrl = location.href;
 
     const emoteCache = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || "{}");
@@ -111,12 +112,10 @@
         }
     }
 
-    function setupMessageObserver(messagesList) {
-        if (messageObserver) messageObserver.disconnect();
-
+    function setupChatObserver(messagesList, observer) {
         messagesList.querySelectorAll("div.rcx-message").forEach(replaceWithEmotes);
 
-        messageObserver = new MutationObserver(mutations => {
+        observer = new MutationObserver(mutations => {
             for (const mutation of mutations) {
                 for (const node of mutation.addedNodes) {
                     if (node.nodeType === Node.ELEMENT_NODE && node.classList.contains("rcx-message")) {
@@ -126,17 +125,41 @@
             }
         });
 
-        messageObserver.observe(messagesList, { childList: true });
+        observer.observe(messagesList, { childList: true });
+    }
+
+    function setupMessagesObserver() {
+        const messagesList = document.querySelector("ul.messages-list");
+        if (!messagesList) return
+        if (messagesObserver) messagesObserver.disconnect();
+        setupChatObserver(messagesList, messagesObserver);
+        return messagesList;
+    }
+
+    function setupThreadObserver() {
+        const threadList = document.querySelector("ul.thread");
+        if (!threadList) return
+        if (threadObserver) threadObserver.disconnect();
+        setupChatObserver(threadList, threadObserver);
+        return threadList;
     }
 
     function runScript() {
         let messagesList;
+        let threadList;
         const observer = new MutationObserver(() => {
-            if (location.href !== currentUrl || !messagesList) {
+            if (location.href !== currentUrl) {
                 currentUrl = location.href;
-                messagesList = document.querySelector("ul.messages-list");
-                if (!messagesList) return
-                setupMessageObserver(messagesList);
+                messagesList = setupMessagesObserver();
+                threadList = setupThreadObserver();
+            }
+
+            if (!messagesList) {
+                messagesList = setupMessagesObserver();
+            }
+
+            if (!threadList) {
+                threadList = setupThreadObserver();
             }
         });
 
