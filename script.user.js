@@ -15,24 +15,29 @@
     const API_URL = "https://7tv.io/v3/gql";
     const EMOTE_REGEX = /^:([A-Z0-9_]+):$/i;
     const LOCAL_STORAGE_KEY = "rc_seventv_emote_cache";
+    const SEARCH_DEBOUNCE_MS = 300;
 
     let messagesObserver = null;
     let threadObserver = null;
     let currentUrl = location.href;
+    let searchTimeout = null;
+    let lastSearchQuery = "";
+    let textInput = null;
+    let emotePopup = null;
 
     const emoteCache = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || "{}");
 
-    function buildRequestBody(emoteName) {
+    function buildRequestBody(query, limit = 1, exactMatch = true) {
         return JSON.stringify({
             operationName: "SearchEmotes",
             variables: {
-                query: emoteName,
-                limit: 1,
+                query: query,
+                limit: limit,
                 page: 1,
                 sort: { value: "popularity", order: "DESCENDING" },
                 filter: {
                     category: "TOP",
-                    exact_match: true,
+                    exact_match: exactMatch,
                     case_sensitive: false,
                     ignore_tags: false,
                     zero_width: false,
@@ -103,13 +108,136 @@
             const emote = await searchEmote(emoteName);
             if (!emote) continue;
 
-            const newSpan = document.createElement("span");
-            newSpan.className = `rcx-message__emoji emoji rcx-message__emoji--big`;
-            newSpan.style.backgroundImage = `url("${emote.imageUrl}")`;
-            newSpan.title = `:${emote.name}:`;
-            newSpan.textContent = `:${emote.name}:`;
-            span.replaceWith(newSpan);
+            // Using image version
+            span.replaceWith(createEmoteImage(emote));
+
+            // Using span version
+            // span.replaceWith(createEmoteSpan(emote));
         }
+    }
+
+    function createEmoteImage(emote) {
+        const newImg = document.createElement("img");
+        newImg.src = emote.imageUrl;
+        newImg.title = `${emote.name}`;
+        return newImg;
+    }
+
+    function createEmoteSpan(emote) {
+        const newSpan = document.createElement("span");
+        newSpan.className = `rcx-message__emoji emoji rcx-message__emoji--big`;
+        newSpan.style.backgroundImage = `url("${emote.imageUrl}")`;
+        newSpan.title = `${emote.name}`;
+        newSpan.textContent = `:${emote.name}:`;
+        return newSpan;
+    }
+
+    async function searchEmotes(query) {
+        if (!query || query.length < 2) return [];
+
+        try {
+            const response = await fetch(API_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: buildRequestBody(query, 10, false)
+            });
+
+            const result = await response.json();
+            return result?.data?.emotes?.items || [];
+        } catch (err) {
+            console.error(`Failed to fetch emotes for "${query}":`, err);
+            return [];
+        }
+    }
+
+    function createEmoteWrapper(emote) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "rcx-option__wrapper";
+
+        const column = document.createElement("div");
+        column.className = "rcx-option__column";
+
+        const img = document.createElement("img");
+        const baseUrl = emote.host.url;
+        const filename = emote.host.files.find(f => f.name === "2x.webp")?.name || emote.host.files[0].name;
+        img.src = `${baseUrl}/${filename}`;
+        img.style.width = "24px";
+        img.style.height = "24px";
+        img.className = "rcx-css-0";
+
+        const content = document.createElement("div");
+        content.className = "rcx-option__content";
+        content.textContent = `:${emote.name}:`;
+
+        column.appendChild(img);
+        wrapper.appendChild(column);
+        wrapper.appendChild(content);
+        return wrapper;
+    }
+
+    function createEmoteListItem(emote) {
+        const li = document.createElement("li");
+        li.tabIndex = "-1";
+        li.className = "rcx-option";
+        li.id = `popup-item-:${emote.name}:`;
+
+        li.appendChild(createEmoteWrapper(emote));
+
+        li.addEventListener("click", () => {
+            if (textInput) {
+                const currentValue = textInput.value;
+                const lastColonIndex = currentValue.lastIndexOf(":");
+                if (lastColonIndex !== -1) {
+                    textInput.value = currentValue.substring(0, lastColonIndex + 1) + emote.name + ": ";
+                    textInput.dispatchEvent(new Event("input", { bubbles: true }));
+                    textInput.focus();
+                    emotePopup.remove();
+                }
+            }
+        });
+
+        return li;
+    }
+
+    function filterUniqueEmotes(emotes) {
+        const seenNames = new Set();
+        return emotes.filter(emote => {
+            const lowerName = emote.name.toLowerCase();
+            if (seenNames.has(lowerName)) return false;
+            seenNames.add(lowerName);
+            return true;
+        });
+    }
+
+    function updateEmotePopup(query) {
+        if (searchTimeout) {
+            clearTimeout(searchTimeout);
+        }
+
+        searchTimeout = setTimeout(async () => {
+            if (query === lastSearchQuery) return;
+            lastSearchQuery = query;
+
+            emotePopup = document.querySelector("footer div[role='menu']");
+            if (!emotePopup) return;
+
+            const oldEmoteList = emotePopup.querySelector(".rcx-box--full:last-child");
+            if (!oldEmoteList) return;
+
+            const result = await searchEmotes(query);
+            if (result.length === 0) return;
+
+            const emotes = filterUniqueEmotes(result);
+
+            const newEmoteList = document.createElement("div");
+            newEmoteList.className = "rcx-box rcx-box--full";
+
+            emotes.forEach(emote => {
+                newEmoteList.appendChild(createEmoteListItem(emote));
+            });
+
+            oldEmoteList.replaceWith(newEmoteList);
+        }, SEARCH_DEBOUNCE_MS);
     }
 
     function setupChatObserver(messagesList, observer) {
@@ -144,6 +272,23 @@
         return threadList;
     }
 
+    function setupEmoteSearch() {
+        textInput = document.querySelector(".rc-message-box__textarea");
+        if (!textInput) return;
+
+        textInput.addEventListener("input", (e) => {
+            const value = e.target.value;
+            const lastColonIndex = value.lastIndexOf(":");
+
+            if (lastColonIndex !== -1) {
+                const query = value.substring(lastColonIndex + 1);
+                if (query.length >= 2) {
+                    updateEmotePopup(query);
+                }
+            }
+        });
+    }
+
     function runScript() {
         let messagesList;
         let threadList;
@@ -161,6 +306,8 @@
             if (!threadList) {
                 threadList = setupThreadObserver();
             }
+
+            setupEmoteSearch();
         });
 
         observer.observe(document.body, { childList: true, subtree: true });
