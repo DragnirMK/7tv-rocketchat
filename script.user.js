@@ -22,8 +22,6 @@
     let currentUrl = location.href;
     let searchTimeout = null;
     let lastSearchQuery = "";
-    let textInput = null;
-    let emotePopup = null;
 
     const emoteCache = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || "{}");
 
@@ -175,7 +173,7 @@
         return wrapper;
     }
 
-    function createEmoteListItem(emote) {
+    function createEmoteListItem(textInput, emote, popup) {
         const li = document.createElement("li");
         li.tabIndex = "-1";
         li.className = "rcx-option";
@@ -184,15 +182,13 @@
         li.appendChild(createEmoteWrapper(emote));
 
         li.addEventListener("click", () => {
-            if (textInput) {
-                const currentValue = textInput.value;
-                const lastColonIndex = currentValue.lastIndexOf(":");
-                if (lastColonIndex !== -1) {
-                    textInput.value = currentValue.substring(0, lastColonIndex + 1) + emote.name + ": ";
-                    textInput.dispatchEvent(new Event("input", { bubbles: true }));
-                    textInput.focus();
-                    emotePopup.remove();
-                }
+            const currentValue = textInput.value;
+            const lastColonIndex = currentValue.lastIndexOf(":");
+            if (lastColonIndex !== -1) {
+                textInput.value = currentValue.substring(0, lastColonIndex + 1) + emote.name + ": ";
+                textInput.dispatchEvent(new Event("input", { bubbles: true }));
+                textInput.focus();
+                popup.remove();
             }
         });
 
@@ -209,7 +205,7 @@
         });
     }
 
-    function updateEmotePopup(query) {
+    function updateEmotePopup(textInput, query, thread = false) {
         if (searchTimeout) {
             clearTimeout(searchTimeout);
         }
@@ -218,7 +214,14 @@
             if (query === lastSearchQuery) return;
             lastSearchQuery = query;
 
-            emotePopup = document.querySelector("footer div[role='menu']");
+            let emotePopup;
+            if (thread) {
+                const contextualBar = document.querySelector('div[aria-labelledby="contextualbarTitle"]');
+                if (!contextualBar) return;
+                emotePopup = contextualBar.querySelector("footer div[role='menu']");
+            } else {
+                emotePopup = document.querySelector("footer div[role='menu']");
+            }
             if (!emotePopup) return;
 
             const oldEmoteList = emotePopup.querySelector(".rcx-box--full:last-child");
@@ -233,7 +236,7 @@
             newEmoteList.className = "rcx-box rcx-box--full";
 
             emotes.forEach(emote => {
-                newEmoteList.appendChild(createEmoteListItem(emote));
+                newEmoteList.appendChild(createEmoteListItem(textInput, emote, emotePopup));
             });
 
             oldEmoteList.replaceWith(newEmoteList);
@@ -258,7 +261,7 @@
 
     function setupMessagesObserver() {
         const messagesList = document.querySelector("ul.messages-list");
-        if (!messagesList) return
+        if (!messagesList) return;
         if (messagesObserver) messagesObserver.disconnect();
         setupChatObserver(messagesList, messagesObserver);
         return messagesList;
@@ -266,14 +269,22 @@
 
     function setupThreadObserver() {
         const threadList = document.querySelector("ul.thread");
-        if (!threadList) return
+        if (!threadList) return;
         if (threadObserver) threadObserver.disconnect();
         setupChatObserver(threadList, threadObserver);
+        setupEmoteSearch(true);
         return threadList;
     }
 
-    function setupEmoteSearch() {
-        textInput = document.querySelector(".rc-message-box__textarea");
+    function setupEmoteSearch(thread = false) {
+        let textInput;
+        if (thread) {
+            const contextualBar = document.querySelector('div[aria-labelledby="contextualbarTitle"]');
+            if (!contextualBar) return;
+            textInput = contextualBar.querySelector('.rc-message-box__textarea');
+        } else {
+            textInput = document.querySelector(".rc-message-box__textarea");
+        }
         if (!textInput) return;
 
         textInput.addEventListener("input", (e) => {
@@ -283,20 +294,23 @@
             if (lastColonIndex !== -1) {
                 const query = value.substring(lastColonIndex + 1);
                 if (query.length >= 2) {
-                    updateEmotePopup(query);
+                    updateEmotePopup(textInput, query, thread);
                 }
             }
         });
+        return textInput
     }
 
     function runScript() {
         let messagesList;
         let threadList;
+        let textInput;
         const observer = new MutationObserver(() => {
             if (location.href !== currentUrl) {
                 currentUrl = location.href;
                 messagesList = setupMessagesObserver();
                 threadList = setupThreadObserver();
+                textInput = setupEmoteSearch();
             }
 
             if (!messagesList) {
@@ -307,7 +321,9 @@
                 threadList = setupThreadObserver();
             }
 
-            setupEmoteSearch();
+            if (!textInput) {
+                textInput = setupEmoteSearch();
+            }
         });
 
         observer.observe(document.body, { childList: true, subtree: true });
