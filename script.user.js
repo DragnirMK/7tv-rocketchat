@@ -13,7 +13,7 @@
     'use strict';
 
     const API_URL = "https://7tv.io/v3/gql";
-    const EMOTE_REGEX = /^:([A-Z0-9_]+):$/i;
+    const EMOTE_REGEX = /^:([A-Z0-9_:]+):$/i;
     const LOCAL_STORAGE_KEY = "rc_seventv_emote_cache";
     const SEARCH_DEBOUNCE_MS = 300;
 
@@ -95,22 +95,26 @@
         }
     }
 
-    async function replaceWithEmotes(messageDiv) {
-        const spans = messageDiv.querySelectorAll('span[role="img"][aria-label]');
-        for (const span of spans) {
-            const text = span.textContent.trim();
+    const replaceWithEmotes = messageDiv => _replaceWithEmotes(messageDiv.querySelector('div[class="rcx-message-body"]'))
+
+    async function _replaceWithEmotes(div) {
+        if (!div) return;
+        if (div.nodeType === Node.TEXT_NODE || (div.nodeType === Node.ELEMENT_NODE && div.role === 'img')) {
+            const text = div.textContent.trim();
             const match = text.match(EMOTE_REGEX);
-            if (!match) continue;
+            if (!match) return;
 
             const emoteName = match[1];
             const emote = await searchEmote(emoteName);
-            if (!emote) continue;
+            if (!emote) return;
 
             // Using image version
-            span.replaceWith(createEmoteImage(emote));
+            div.replaceWith(createEmoteImage(emote));
 
             // Using span version
-            // span.replaceWith(createEmoteSpan(emote));
+            // div.replaceWith(createEmoteSpan(emote));
+        } else {
+            div.childNodes.forEach(_replaceWithEmotes);
         }
     }
 
