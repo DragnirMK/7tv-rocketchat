@@ -96,26 +96,45 @@
     }
 
     const replaceWithEmotes = messageDiv => _replaceWithEmotes(messageDiv.querySelector('div[class="rcx-message-body"]'))
+    const hasTagInParents = (div, tag) => div && (div.tagName === tag || hasTagInParents(div.parentNode, tag))
 
     async function _replaceWithEmotes(div) {
-        if (!div) return;
-        if (div.nodeType === Node.TEXT_NODE || (div.nodeType === Node.ELEMENT_NODE && div.role === 'img')) {
-            const text = div.textContent.trim();
-            const match = text.match(EMOTE_REGEX);
-            if (!match) return;
-
-            const emoteName = match[1];
-            const emote = await searchEmote(emoteName);
-            if (!emote) return;
-
-            // Using image version
-            div.replaceWith(createEmoteImage(emote));
-
-            // Using span version
-            // div.replaceWith(createEmoteSpan(emote));
+        if (!div || hasTagInParents(div, 'CODE')) return;
+        if (div.nodeType === Node.ELEMENT_NODE && div.role === 'img') {
+            const emote = createEmoteElement(await getEmoteFromContent(div.textContent.trim()));
+            if (emote) div.replaceWith(emote);
+        } else if (div.nodeType === Node.TEXT_NODE) {
+            const data = await Promise.all(div.textContent.split(' ').map(async (text) => {
+                const emote = await getEmoteFromContent(text);
+                return { emote, content: createEmoteElement(emote) ?? text }
+            }))
+            if (data.some(({ emote }) => emote)) {
+                div.replaceWith(...data.reduce((arr, {content}, i) => {
+                    if (typeof content === 'string' && typeof arr[arr.length - 1] === 'string') arr[arr.length - 1] += ' ' + content;
+                    else arr.push(content);
+                    return arr;
+                }, []));
+            }
         } else {
             div.childNodes.forEach(_replaceWithEmotes);
         }
+    }
+
+    async function getEmoteFromContent(text) {
+        const match = text.match(EMOTE_REGEX);
+        if (!match) return;
+
+        const emoteName = match[1];
+        return await searchEmote(emoteName);
+    }
+
+    function createEmoteElement(emote) {
+        if (!emote) return;
+        // Using image version
+        return createEmoteImage(emote);
+
+        // Using span version
+        // return createEmoteSpan(emote);
     }
 
     function createEmoteImage(emote) {
